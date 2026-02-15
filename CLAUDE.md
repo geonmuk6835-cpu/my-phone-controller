@@ -62,6 +62,27 @@
 - `termux-wallpaper -f FILE` - 배경화면 설정
 - `termux-wallpaper -u URL` - URL로 배경화면 설정
 
+## 폰-컴퓨터 연결
+
+### 연결 스크립트
+- `bash connect.sh` - 대화형 연결 메뉴 실행
+- `bash connect.sh start` - SSH + HTTP 서버 동시 시작
+- `bash connect.sh ssh` - SSH 서버만 시작
+- `bash connect.sh http` - HTTP 파일 서버만 시작
+- `bash connect.sh stop` - 모든 서버 중지
+- `bash connect.sh status` - 연결 상태 확인
+- `bash connect.sh adb` - ADB 무선 연결 안내
+
+### 빠른 상태 확인
+- `bash connection-status.sh` - 현재 연결 상태 + 접속 명령어 표시
+
+### 연결 방법 요약
+| 방법 | 포트 | 용도 |
+|------|------|------|
+| SSH | 8022 | 터미널 접속, 파일 전송 (scp) |
+| HTTP | 8080 | 브라우저로 파일 탐색 |
+| ADB 무선 | 5555 | Android 디버그 브리지 |
+
 ## 사용 규칙
 - 사용자가 한국어로 요청하면 해당하는 termux-api 명령을 Bash로 실행
 - 결과를 한국어로 알기 쉽게 요약하여 보여줌
