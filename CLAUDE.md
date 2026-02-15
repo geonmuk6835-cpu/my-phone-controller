@@ -83,6 +83,19 @@
 | HTTP | 8080 | 브라우저로 파일 탐색 |
 | ADB 무선 | 5555 | Android 디버그 브리지 |
 
+## 앱 관리
+
+### 앱 삭제
+- `bash remove-app.sh <패키지명 또는 앱이름>` - 앱 삭제
+- `bash remove-app.sh canon` - 캐논 프린터 앱 삭제
+- `bash remove-app.sh 캐논프린터` - 캐논 프린터 앱 삭제 (한국어)
+
+### 지원되는 앱 삭제 방법
+| 방법 | 명령 | 설명 |
+|------|------|------|
+| 시스템 삭제 화면 | `am start -a android.intent.action.DELETE -d package:PACKAGE` | 확인 후 삭제 (권장) |
+| 직접 삭제 | `pm uninstall --user 0 PACKAGE` | 바로 삭제 |
+
 ## 사용 규칙
 - 사용자가 한국어로 요청하면 해당하는 termux-api 명령을 Bash로 실행
 - 결과를 한국어로 알기 쉽게 요약하여 보여줌
