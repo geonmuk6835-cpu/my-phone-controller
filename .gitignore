@@ -1,0 +1,5 @@
+# Test/temp PDF files
+test_scan.pdf
+test_output.pdf
+test_scan_ocr.pdf
+*.tmp
