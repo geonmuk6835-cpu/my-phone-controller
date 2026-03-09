@@ -50,16 +50,16 @@ LEFT = Alignment(horizontal="left", vertical="center", wrap_text=True)
 # ── 컬럼 정의 ────────────────────────────────────────
 COLUMNS = [
     ("No.", 6, CENTER),
-    ("거래일자", 14, CENTER),
     ("법정동", 10, CENTER),
     ("지번", 12, CENTER),
     ("지목", 8, CENTER),
     ("용도지역", 16, CENTER),
-    ("거래면적(㎡)", 14, RIGHT),
-    ("거래금액(만원)", 16, RIGHT),
-    ("단가(만원/㎡)", 14, RIGHT),
-    ("단가(만원/평)", 14, RIGHT),
-    ("거래유형", 10, CENTER),
+    ("거래건수", 10, RIGHT),
+    ("평균면적(㎡)", 14, RIGHT),
+    ("평균금액(만원)", 16, RIGHT),
+    ("평균단가(만원/㎡)", 16, RIGHT),
+    ("평균단가(만원/평)", 16, RIGHT),
+    ("거래기간", 20, CENTER),
 ]
 
 TREND_COLUMNS = [
@@ -313,6 +313,57 @@ def filter_nearby(records):
     ]
 
 
+def group_by_jibun(records):
+    """지번별로 그룹핑하여 평균 집계."""
+    groups = {}
+    for r in records:
+        dong = r.get("법정동", "")
+        jibun = r.get("지번", "")
+        key = f"{dong}_{jibun}"
+        if key not in groups:
+            groups[key] = {
+                "법정동": dong,
+                "지번": jibun,
+                "지목": r.get("지목", ""),
+                "용도지역": r.get("용도지역", ""),
+                "records": [],
+            }
+        groups[key]["records"].append(r)
+
+    result = []
+    for key, g in groups.items():
+        recs = g["records"]
+        areas = [r["거래면적_num"] for r in recs if r["거래면적_num"] > 0]
+        amounts = [r["거래금액_num"] for r in recs if r["거래금액_num"] > 0]
+        prices_sqm = [r["단가_sqm"] for r in recs if r["단가_sqm"] > 0]
+        prices_pyeong = [r["단가_pyeong"] for r in recs if r["단가_pyeong"] > 0]
+        dates = sorted([r.get("거래일자", "") for r in recs if r.get("거래일자", "")])
+
+        period = ""
+        if dates:
+            if len(dates) == 1:
+                period = dates[0]
+            else:
+                period = f"{dates[0]} ~ {dates[-1]}"
+
+        result.append({
+            "법정동": g["법정동"],
+            "지번": g["지번"],
+            "지목": g["지목"],
+            "용도지역": g["용도지역"],
+            "거래건수": len(recs),
+            "평균면적": round(sum(areas) / len(areas), 2) if areas else 0,
+            "평균금액": round(sum(amounts) / len(amounts)) if amounts else 0,
+            "평균단가_sqm": round(sum(prices_sqm) / len(prices_sqm), 1) if prices_sqm else 0,
+            "평균단가_pyeong": round(sum(prices_pyeong) / len(prices_pyeong), 1) if prices_pyeong else 0,
+            "거래기간": period,
+        })
+
+    # 평균단가 내림차순 정렬
+    result.sort(key=lambda x: x["평균단가_sqm"], reverse=True)
+    return result
+
+
 def calculate_trend(records):
     """명지동 전체 반기별 추이 요약."""
     dong_records = [r for r in records if r.get("법정동", "") == TARGET_DONG]
@@ -376,26 +427,26 @@ def write_header_row(ws, row, columns, start_col=1):
 
 
 def write_data_row(ws, row, record, idx, is_target=False, is_alt=False):
-    """거래 데이터 행 작성."""
+    """지번별 평균 데이터 행 작성."""
     fill = TARGET_HIGHLIGHT if is_target else (ALT_ROW_FILL if is_alt else None)
 
     values = [
         idx,
-        record.get("거래일자", ""),
         record.get("법정동", ""),
         record.get("지번", ""),
         record.get("지목", ""),
         record.get("용도지역", ""),
-        record.get("거래면적_num", 0),
-        record.get("거래금액_num", 0),
-        record.get("단가_sqm", 0),
-        record.get("단가_pyeong", 0),
-        record.get("거래유형", ""),
+        record.get("거래건수", 0),
+        record.get("평균면적", 0),
+        record.get("평균금액", 0),
+        record.get("평균단가_sqm", 0),
+        record.get("평균단가_pyeong", 0),
+        record.get("거래기간", ""),
     ]
 
     formats = [
-        None, None, None, None, None, None,
-        "#,##0.00", "#,##0", "#,##0.0", "#,##0.0", None,
+        None, None, None, None, None,
+        "#,##0", "#,##0.00", "#,##0", "#,##0.0", "#,##0.0", None,
     ]
 
     for i, (val, nf) in enumerate(zip(values, formats)):
@@ -434,18 +485,20 @@ def create_sheet_transactions(wb, title, subtitle, records, sheet_name):
         apply_cell_style(cell, font=NOTE_FONT, alignment=CENTER)
         data_end_row = header_row + 1
     else:
-        for idx, record in enumerate(records, 1):
+        # 지번별 평균 집계
+        grouped = group_by_jibun(records)
+        for idx, record in enumerate(grouped, 1):
             row = header_row + idx
             jibun = record.get("지번", "")
-            is_target = TARGET_JIBUN_SUB in str(jibun) and match_jibun(jibun, TARGET_JIBUN_MAIN)
+            is_target = match_jibun(jibun, TARGET_JIBUN_MAIN)
             write_data_row(ws, row, record, idx, is_target=is_target, is_alt=(idx % 2 == 0))
-        data_end_row = header_row + len(records)
+        data_end_row = header_row + len(grouped)
 
     # 풋터 노트
     note_row = data_end_row + 2
     ws.merge_cells(start_row=note_row, start_column=1, end_row=note_row, end_column=col_count)
     cell = ws.cell(row=note_row, column=1,
-                   value="* 거래금액 단위: 만원 | 단가 = 거래금액 ÷ 거래면적 | 1평 = 3.3058㎡ | 출처: 국토교통부 실거래가 공개시스템")
+                   value="* 금액 단위: 만원 | 동일 지번 거래의 평균값 표시 | 단가 = 거래금액 ÷ 거래면적 | 1평 = 3.3058㎡ | 출처: 국토교통부 실거래가 공개시스템")
     apply_cell_style(cell, font=NOTE_FONT, alignment=LEFT, border=None)
 
     note2_row = note_row + 1
@@ -563,8 +616,8 @@ def export_to_excel(target_data, nearby_data, trend_summary, output_path):
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
     wb.save(output_path)
     print(f"\n✅ Excel 파일 저장 완료: {output_path}")
-    print(f"   - Sheet 1: 대상 토지 거래내역 ({len(target_data)}건)")
-    print(f"   - Sheet 2: 주변 비교 거래내역 ({len(nearby_data)}건)")
+    print(f"   - Sheet 1: 대상 토지 (지번별 평균, 원본 {len(target_data)}건)")
+    print(f"   - Sheet 2: 주변 비교 (지번별 평균, 원본 {len(nearby_data)}건)")
     print(f"   - Sheet 3: 추이 요약 ({len(trend_summary)}개 반기)")
 
 
