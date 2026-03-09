@@ -122,9 +122,13 @@ def fetch_with_requests(api_key, lawd_cd, start_ym, end_ym):
     """requests + XML 파싱으로 직접 API 호출 (fallback)."""
     import xml.etree.ElementTree as ET
     import requests
+    from urllib.parse import quote
 
-    base_url = "http://apis.data.go.kr/1613000/RTMSDataSvcLandTrade/getRTMSDataSvcLandTrade"
+    base_url = "https://apis.data.go.kr/1613000/RTMSDataSvcLandTrade/getRTMSDataSvcLandTrade"
     all_records = []
+
+    # 서비스키 URL 인코딩 (이중 인코딩 방지)
+    encoded_key = quote(api_key, safe="%")
 
     # 월별 목록 생성
     months = []
@@ -140,22 +144,17 @@ def fetch_with_requests(api_key, lawd_cd, start_ym, end_ym):
     print(f"[requests] 토지 매매 실거래가 조회 중... ({len(months)}개월)")
 
     for i, ym in enumerate(months):
-        params = {
-            "serviceKey": api_key,
-            "LAWD_CD": lawd_cd,
-            "DEAL_YMD": ym,
-            "numOfRows": "1000",
-            "pageNo": "1",
-        }
+        # 서비스키를 URL에 직접 삽입 (이중 인코딩 방지)
+        url = f"{base_url}?serviceKey={encoded_key}&LAWD_CD={lawd_cd}&DEAL_YMD={ym}&numOfRows=1000&pageNo=1"
         try:
-            resp = requests.get(base_url, params=params, timeout=30)
+            resp = requests.get(url, timeout=30)
             resp.raise_for_status()
         except Exception as e:
             print(f"  {ym} 조회 실패: {e}")
             time.sleep(1)
             # 1회 재시도
             try:
-                resp = requests.get(base_url, params=params, timeout=30)
+                resp = requests.get(url, timeout=30)
                 resp.raise_for_status()
             except Exception:
                 print(f"  {ym} 재시도 실패, 건너뜀")
@@ -165,7 +164,7 @@ def fetch_with_requests(api_key, lawd_cd, start_ym, end_ym):
 
         # 에러 체크
         result_code = root.findtext(".//resultCode")
-        if result_code and result_code != "00":
+        if result_code and result_code not in ("00", "000"):
             result_msg = root.findtext(".//resultMsg", "알 수 없는 오류")
             print(f"  {ym} API 오류: [{result_code}] {result_msg}")
             if result_code in ("SERVICE_KEY_IS_NOT_REGISTERED_ERROR", "30"):
@@ -204,18 +203,18 @@ def fetch_land_transactions(api_key, lawd_cd, start_ym, end_ym):
 
 def normalize_records(records):
     """레코드를 통일된 형식으로 정규화."""
-    # PublicDataReader 컬럼명 매핑
+    # PublicDataReader 한글 컬럼명 / XML 영문 태그명 매핑
     key_map = {
         "법정동": ["법정동", "umdNm"],
-        "지번": ["지번", "jibun", "lndpclAr"],
-        "지목": ["지목", "jimok", "sggCd"],
-        "용도지역": ["용도지역", "usgRgnNm"],
-        "거래면적": ["거래면적", "dealArea", "dealAmount"],
+        "지번": ["지번", "jibun"],
+        "지목": ["지목", "jimok"],
+        "용도지역": ["용도지역", "landUse", "usgRgnNm"],
+        "거래면적": ["거래면적", "dealArea"],
         "거래금액": ["거래금액", "dealAmount"],
         "년": ["년", "dealYear"],
         "월": ["월", "dealMonth"],
         "일": ["일", "dealDay"],
-        "거래유형": ["거래유형", "dealType", "reqGbn"],
+        "거래유형": ["거래유형", "dealingGbn", "dealType"],
     }
 
     normalized = []
@@ -278,20 +277,26 @@ def normalize_records(records):
 
 
 def match_jibun(jibun_str, main_num):
-    """지번이 특정 본번과 매칭되는지 확인."""
+    """지번이 특정 본번과 매칭되는지 확인.
+    API가 지번을 '1***'처럼 마스킹하므로, 첫 자리가 일치하면 매칭으로 간주.
+    """
     if not jibun_str:
         return False
     jibun = str(jibun_str).strip()
-    # "121" 또는 "121-4" 또는 " 121" 등
+    main_str = str(main_num)
+    # 마스킹된 경우 (예: "1***") → 첫 자리 비교
+    if "***" in jibun:
+        return jibun[0] == main_str[0]
+    # 마스킹 안 된 경우 → 본번 직접 비교
     parts = jibun.replace(" ", "").split("-")
     try:
-        return str(int(parts[0])) == str(main_num)
+        return str(int(parts[0])) == main_str
     except (ValueError, IndexError):
-        return jibun.startswith(str(main_num))
+        return jibun.startswith(main_str)
 
 
 def filter_target(records):
-    """대상 필지(명지동 121번대) 거래 필터링."""
+    """대상 필지(명지동, 지번 1xx번대 = 121-4 포함) 거래 필터링."""
     return [
         r for r in records
         if r.get("법정동", "") == TARGET_DONG
@@ -300,7 +305,7 @@ def filter_target(records):
 
 
 def filter_nearby(records):
-    """주변 비교 거래(명지동 내 기타) 필터링."""
+    """주변 비교 거래(명지동 내 기타 지번) 필터링."""
     return [
         r for r in records
         if r.get("법정동", "") == TARGET_DONG
@@ -538,8 +543,8 @@ def export_to_excel(target_data, nearby_data, trend_summary, output_path):
     wb.remove(wb.active)
 
     # Sheet 1: 대상 토지 거래내역
-    title1 = f"부산광역시 강서구 {TARGET_DONG} {TARGET_JIBUN} 토지 매매 실거래가"
-    sub1 = f"조회기간: {START_YM[:4]}.{START_YM[4:]} ~ {END_YM[:4]}.{END_YM[4:]} | 출처: 국토교통부 실거래가 공개시스템"
+    title1 = f"부산광역시 강서구 {TARGET_DONG} {TARGET_JIBUN} 인근 토지 매매 실거래가"
+    sub1 = f"조회기간: {START_YM[:4]}.{START_YM[4:]} ~ {END_YM[:4]}.{END_YM[4:]} | 출처: 국토교통부 실거래가 공개시스템 | 지번 1xx번대(마스킹: 1***)"
     ws1 = create_sheet_transactions(wb, title1, sub1, target_data, "대상 토지 거래내역")
 
     # Sheet 2: 주변 비교 거래내역
